@@ -1,0 +1,340 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Serverless text processing portfolio project",
+  "Parameters": {
+    "ProjectName": {
+      "Type": "String",
+      "Default": "marquis's final"
+    }
+  },
+  "Resources": {
+    "OutputBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/aws/lambda/${AWS::StackName}-counter"
+        },
+        "RetentionInDays": 7
+      }
+    },
+    "ExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ScopedTextProcessing",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "s3:GetObject",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-input/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "s3:PutObject",
+                  "Resource": {
+                    "Fn::Sub": "${OutputBucket.Arn}/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "LogGroup",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "dynamodb:PutItem",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ResultsTable",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "CounterFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": {
+          "Fn::Sub": "${AWS::StackName}-counter"
+        },
+        "Runtime": "python3.12",
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "ExecutionRole",
+            "Arn"
+          ]
+        },
+        "Timeout": 30,
+        "MemorySize": 128,
+        "Environment": {
+          "Variables": {
+            "OUTPUT_BUCKET": {
+              "Ref": "OutputBucket"
+            },
+            "PROJECT_NAME": {
+              "Ref": "ProjectName"
+            },
+            "RESULTS_TABLE": {
+              "Ref": "ResultsTable"
+            }
+          }
+        },
+        "Code": {
+          "ZipFile": "import json\nimport os\nimport urllib.parse\nimport boto3\n\ns3 = boto3.client('s3')\ndynamodb = boto3.client('dynamodb')\nMAX_BYTES = 1048576\n\ndef handler(event, context):\n    results = []\n    for record in event.get('Records', []):\n        bucket = record['s3']['bucket']['name']\n        key = urllib.parse.unquote_plus(record['s3']['object']['key'])\n        response = s3.get_object(Bucket=bucket, Key=key)\n        if response['ContentLength'] > MAX_BYTES:\n            response['Body'].close()\n            raise ValueError('Text file exceeds 1 MiB limit')\n        text = response['Body'].read(MAX_BYTES + 1).decode('utf-8')\n        result = {\n            'project': os.environ['PROJECT_NAME'],\n            'source_file': key,\n            'word_count': len(text.split()),\n            'character_count': len(text),\n            'status': 'processed'\n        }\n        output_key = key + '.json'\n        s3.put_object(Bucket=os.environ['OUTPUT_BUCKET'], Key=output_key,\n                      Body=json.dumps(result, indent=2).encode('utf-8'),\n                      ContentType='application/json')\n        dynamodb.put_item(TableName=os.environ['RESULTS_TABLE'], Item={\n            'source_file': {'S': key},\n            'project': {'S': result['project']},\n            'word_count': {'N': str(result['word_count'])},\n            'character_count': {'N': str(result['character_count'])},\n            'status': {'S': 'processed'}\n        })\n        print(json.dumps(result))\n        results.append(result)\n    return {'processed': len(results), 'results': results}\n"
+        }
+      }
+    },
+    "InvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Ref": "CounterFunction"
+        },
+        "Principal": "s3.amazonaws.com",
+        "SourceAccount": {
+          "Ref": "AWS::AccountId"
+        },
+        "SourceArn": {
+          "Fn::Sub": "arn:${AWS::Partition}:s3:::${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-input"
+        }
+      }
+    },
+    "InputBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DependsOn": "InvokePermission",
+      "Properties": {
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "BucketName": {
+          "Fn::Sub": "${AWS::StackName}-${AWS::AccountId}-${AWS::Region}-input"
+        },
+        "NotificationConfiguration": {
+          "LambdaConfigurations": [
+            {
+              "Event": "s3:ObjectCreated:*",
+              "Function": {
+                "Fn::GetAtt": [
+                  "CounterFunction",
+                  "Arn"
+                ]
+              },
+              "Filter": {
+                "S3Key": {
+                  "Rules": [
+                    {
+                      "Name": "suffix",
+                      "Value": ".txt"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ResultsTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "source_file",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "source_file",
+            "KeyType": "HASH"
+          }
+        ],
+        "SSESpecification": {
+          "SSEEnabled": true
+        }
+      }
+    },
+    "ErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "One or more text processor errors in a five-minute period; inspect Lambda logs.",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "CounterFunction"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "InputBucketTLS": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "InputBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "InputBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${InputBucket.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "OutputBucketTLS": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "OutputBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "OutputBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${OutputBucket.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "InputBucket": {
+      "Value": {
+        "Ref": "InputBucket"
+      }
+    },
+    "OutputBucket": {
+      "Value": {
+        "Ref": "OutputBucket"
+      }
+    },
+    "CounterFunction": {
+      "Value": {
+        "Ref": "CounterFunction"
+      }
+    },
+    "ResultsTable": {
+      "Value": {
+        "Ref": "ResultsTable"
+      }
+    },
+    "ErrorAlarm": {
+      "Value": {
+        "Ref": "ErrorAlarm"
+      }
+    }
+  }
+}
