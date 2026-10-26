@@ -59,7 +59,7 @@ bash cleanup.sh
 
 The script asks you to type `DELETE`, empties the two project buckets, deletes this stack, waits, and prints the final status. It does not target other coursework resources.
 
-**Demonstration cleanup status:** pending final verification; see the final report and evidence/cleanup-status.txt when available.
+**Demonstration cleanup status:** verified `DELETE_COMPLETE` on October 25, 2026 at 11:50 PM Pacific. All ten stack resources were deleted after evidence capture. See [cleanup evidence](evidence/cleanup.png) and [details](evidence/cleanup-status.txt).
 
 ## Project files
 

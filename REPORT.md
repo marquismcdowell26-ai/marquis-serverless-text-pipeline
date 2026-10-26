@@ -90,7 +90,7 @@ I would start with the full rubric and workload requirements before building, so
 
 ## Deployment cleanup
 
-At report generation, the demonstration stack is still deployed. Cleanup is the remaining operational checkpoint and must be verified before this report is submitted. The cleanup script empties only the project buckets, deletes the stack, waits for deletion, and checks its final status. This paragraph will be updated after verified teardown.
+After capturing the working-system evidence, I emptied the two demonstration buckets and deleted the marquis-final-text stack in us-west-2. CloudFormation confirmed DELETE_COMPLETE at 2026-10-26 06:50 UTC (October 25, 11:50 PM Pacific). All ten stack resources, including both buckets, Lambda, DynamoDB, the alarm, log group, IAM role, invocation permission, and bucket policies, showed DELETE_COMPLETE. The demonstration deployment is no longer running. Source code and screenshots remain in the public repository; unrelated coursework resources were not targeted.
 
 
 ---
